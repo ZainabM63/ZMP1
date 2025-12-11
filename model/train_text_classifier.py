@@ -28,12 +28,7 @@ except:
     pass
 
 def load_csv_dataset(csv_path: Path) -> pd.DataFrame:
-    """
-    Load CSV dataset.  Handles common formats: 
-    - v1, v2 (SMS spam format)
-    - label, text
-    - message, label
-    """
+  
     try:
         # Try reading with latin-1 encoding (common for SMS datasets)
         df = pd.read_csv(csv_path, encoding='latin-1', on_bad_lines='skip')
@@ -160,7 +155,7 @@ def load_txt_dataset(txt_path: Path) -> pd.DataFrame:
 
 
 def load_all_datasets() -> pd.DataFrame:
-    """Load all CSV and TXT datasets from data directory"""
+    
     if not DATA_DIR.exists():
         raise FileNotFoundError(f"Data directory '{DATA_DIR}' not found.  Please create it and add datasets.")
     
