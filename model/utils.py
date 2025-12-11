@@ -1,4 +1,3 @@
-"""Utility functions for phishing detection model"""
 
 import re
 from urllib.parse import urlparse
@@ -10,14 +9,13 @@ MONEY_KEYWORDS = ['win', 'won', 'free', 'prize', 'claim', 'reward', 'bonus', 'lo
 SUSPICIOUS_TLDS = ['.tk', '.ml', '.ga', '.cf', '.gq', '.xyz', '.top', '.work', '.click']
 
 def extract_urls(text):
-    """Extract URLs from text"""
     # Match http/https URLs with common URL characters
     # Explicitly list allowed characters to avoid suspicious ranges
     url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[\$\-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
     return re.findall(url_pattern, text)
 
 def extract_phishing_features(text, original_text=None):
-    """Extract phishing-specific features from text"""
+    
     features = {}
     text_lower = text.lower() if text else ""
     original_lower = original_text.lower() if original_text else text_lower
@@ -70,7 +68,7 @@ def extract_phishing_features(text, original_text=None):
     return features
 
 def clean_text(s: str, preserve_urls=False) -> tuple:
-    """Clean text and optionally preserve URLs"""
+    
     original = str(s)
     s = original.lower()
     
