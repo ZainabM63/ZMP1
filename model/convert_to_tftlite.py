@@ -1,6 +1,4 @@
-"""
-Convert scikit-learn Random Forest model to TensorFlow Lite
-"""
+
 
 import pickle
 import numpy as np
