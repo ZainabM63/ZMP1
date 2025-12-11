@@ -23,7 +23,7 @@ import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, Input, BatchNormalization
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.metrics import Precision, Recall
+
 
 # Filter warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -267,7 +267,7 @@ def build_model(input_dim, num_classes=3):
     model.compile(
         optimizer=Adam(learning_rate=0.001),
         loss='sparse_categorical_crossentropy',
-        metrics=['accuracy', Precision(name='precision'), Recall(name='recall')]
+        metrics=['accuracy']
     )
     
     print(f"   ✓ Model built with input dimension: {input_dim}")
