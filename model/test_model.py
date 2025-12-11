@@ -4,9 +4,9 @@
 import os
 import pickle
 import numpy as np
-from train_text_classifier import clean_text, extract_phishing_features, create_feature_matrix
 import pandas as pd
 from scipy.sparse import hstack
+from utils import clean_text, extract_phishing_features
 
 # Load model artifacts
 MODEL_PATH = os.path.join("model", "rf_model.pkl")
