@@ -1,490 +1,422 @@
-
 import os
-import sys
-import re
-import pickle
-from pathlib import Path
-from typing import Dict, List, Tuple
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.ensemble import RandomForestClassifier
+import pickle
+import warnings
+
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.svm import SVC
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import (
+    accuracy_score, classification_report, confusion_matrix,
+    roc_curve, auc, precision_recall_fscore_support
+)
+from imblearn.over_sampling import SMOTE
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for server/CI environments without display
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.sparse import hstack
 
+# Filter specific warnings instead of suppressing all
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', category=UserWarning)
 
-DATA_DIR = Path("data")
-MODEL_DIR = Path("model")
-MODEL_PATH = MODEL_DIR / "phisher_model.pkl"
-VECTORIZER_PATH = MODEL_DIR / "phisher_vectorizer. pkl"
-LABEL_ENCODER_PATH = MODEL_DIR / "label_encoder.pkl"
+# CONFIG
+OUTPUT_MODEL = os.path.join("model", "rf_model.pkl")
+OUTPUT_VECTORIZER = os.path.join("model", "vectorizer.pkl")
+OUTPUT_ENCODER = os.path.join("model", "label_encoder.pkl")
+RANDOM_STATE = 42
 
-# Safe CSV field size limit for Windows
-try:
-    import csv
-    csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
-except: 
-    pass
+# Import shared utilities
+from utils import extract_phishing_features, clean_text
 
-def load_csv_dataset(csv_path: Path) -> pd.DataFrame:
-  
+def load_datasets(sample_size=None):
+    """Load and combine all datasets with proper handling
+    
+    Args:
+        sample_size: If provided, sample datasets to this size for faster training.
+                    Use None for full dataset (default).
+    """
+    all_data = []
+    
+    print("📂 Loading datasets...")
+    
+    # 1. Load CEAS_08.csv (email dataset)
     try:
-        # Try reading with latin-1 encoding (common for SMS datasets)
-        df = pd.read_csv(csv_path, encoding='latin-1', on_bad_lines='skip')
-    except: 
-        df = pd.read_csv(csv_path, encoding='utf-8', on_bad_lines='skip')
+        df_ceas = pd.read_csv("data/CEAS_08.csv", encoding="latin-1")
+        print(f"   ✓ CEAS_08.csv: {len(df_ceas)} rows")
+        
+        # Combine subject and body
+        df_ceas['text'] = df_ceas['subject'].fillna('') + ' ' + df_ceas['body'].fillna('')
+        df_ceas['label_class'] = df_ceas['label'].apply(lambda x: 'spam' if x == 1 else 'legitimate')
+        
+        for _, row in df_ceas.iterrows():
+            all_data.append({
+                'text': row['text'],
+                'label': row['label_class'],
+                'original_text': row['text']
+            })
+    except Exception as e:
+        print(f"   ✗ Error loading CEAS_08.csv: {e}")
     
-    # Normalize column names
-    df.columns = [c.lower().strip() for c in df.columns]
+    # 2. Load spam (1).csv (SMS dataset)
+    try:
+        df_sms = pd.read_csv("data/spam (1).csv", encoding="latin-1")
+        print(f"   ✓ spam (1).csv: {len(df_sms)} rows")
+        
+        df_sms = df_sms.rename(columns={"v1": "label", "v2": "text"})
+        df_sms = df_sms[["label", "text"]].dropna()
+        df_sms['label'] = df_sms['label'].str.lower().str.strip()
+        df_sms['label'] = df_sms['label'].replace({'ham': 'legitimate'})
+        
+        for _, row in df_sms.iterrows():
+            all_data.append({
+                'text': row['text'],
+                'label': row['label'],
+                'original_text': row['text']
+            })
+    except Exception as e:
+        print(f"   ✗ Error loading spam (1).csv: {e}")
     
-    # Find label and text columns
-    label_col = None
-    text_col = None
-    
-    for col in df.columns:
-        if col in ['v1', 'label', 'class', 'category', 'type']:
-            label_col = col
-        if col in ['v2', 'text', 'message', 'content', 'sms', 'email', 'body']:
-            text_col = col
-    
-    if not label_col or not text_col:
-        # Fallback:  assume first two columns
-        if len(df.columns) >= 2:
-            label_col = df.columns[0]
-            text_col = df.columns[1]
+    # 3. Load url_dataset.csv (URL-based dataset)
+    try:
+        df_url = pd.read_csv("data/url_dataset.csv", encoding="utf-8")
+        print(f"   ✓ url_dataset.csv: {len(df_url)} rows (raw)")
+        
+        # Check columns
+        if 'url' in df_url.columns and 'type' in df_url.columns:
+            df_url = df_url.dropna(subset=['url', 'type'])
+            
+            # Map types to our classes
+            type_mapping = {
+                'legitimate': 'legitimate',
+                'phishing': 'phishing',
+                'spam': 'spam',
+                'malware': 'phishing',  # treat malware as phishing
+                'defacement': 'phishing'  # treat defacement as phishing
+            }
+            
+            df_url['label'] = df_url['type'].str.lower().str.strip().map(type_mapping)
+            df_url = df_url[df_url['label'].notna()]
+            
+            print(f"   ✓ url_dataset.csv: {len(df_url)} rows (after filtering)")
+            
+            # Sample URL dataset if too large (for performance)
+            if sample_size and len(df_url) > sample_size:
+                # Stratified sampling to maintain class distribution
+                df_url = df_url.groupby('label', group_keys=False).apply(
+                    lambda x: x.sample(min(len(x), sample_size // 3), random_state=RANDOM_STATE)
+                )
+                print(f"   ℹ️  Sampled url_dataset.csv to {len(df_url)} rows")
+            
+            # Use URL as text content
+            for _, row in df_url.iterrows():
+                all_data.append({
+                    'text': row['url'],
+                    'label': row['label'],
+                    'original_text': row['url']
+                })
         else:
-            raise ValueError(f"Cannot identify label/text columns in {csv_path. name}")
+            print(f"   ✗ url_dataset.csv missing expected columns. Found: {df_url.columns.tolist()}")
+    except Exception as e:
+        print(f"   ✗ Error loading url_dataset.csv: {e}")
     
-    # Extract only needed columns
-    df = df[[label_col, text_col]].copy()
-    df. columns = ['label', 'text']
-    df = df.dropna()
-    
-    # Normalize labels
-    df['label'] = df['label'].astype(str).str.lower().str.strip()
-    df['text'] = df['text']. astype(str).str.strip()
-    
-    # Map to standard labels
-    label_map = {
-        'ham': 'legitimate',
-        'legit': 'legitimate',
-        'legitimate': 'legitimate',
-        'normal': 'legitimate',
-        'safe': 'legitimate',
-        '0': 'legitimate',
-        
-        'spam': 'spam',
-        'junk': 'spam',
-        '1': 'spam',
-        
-        'phishing': 'phishing',
-        'phish': 'phishing',
-        'smishing': 'phishing',
-        'malicious': 'phishing',
-        'fraud': 'phishing',
-        'scam': 'phishing',
-        '2': 'phishing',
-    }
-    
-    df['label'] = df['label'].map(label_map)
-    df = df.dropna(subset=['label'])
-    
-    df['source'] = csv_path.name
-    return df[['text', 'label', 'source']]
-
-
-def load_txt_dataset(txt_path: Path) -> pd.DataFrame:
-    
-    messages = []
-    
-    with open(txt_path, 'r', encoding='utf-8', errors='ignore') as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
+    # 4. Load SMSSmishCollection.txt (SMS/Smishing dataset)
+    try:
+        import os
+        smish_path = "data/SMSSmishCollection.txt"
+        if os.path.exists(smish_path):
+            with open(smish_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
             
-            # Try tab-separated
-            if '\t' in line: 
-                parts = line.split('\t', 1)
-                if len(parts) == 2:
-                    label, text = parts
-                    label = label.lower().strip()
-                    
-                    # Map to standard label
-                    if any(x in label for x in ['phish', 'smish', 'malicious', 'fraud', 'scam']):
-                        label = 'phishing'
-                    elif any(x in label for x in ['ham', 'legit', 'safe', 'normal']):
-                        label = 'legitimate'
-                    elif 'spam' in label:
-                        label = 'spam'
-                    else:
-                        label = 'phishing'  # Default for smishing datasets
-                    
-                    messages.append({'text': text.strip(), 'label': label})
+            print(f"   ✓ SMSSmishCollection.txt: {len(lines)} rows (raw)")
+            
+            # Track loaded messages
+            smish_count = 0
+            
+            # Parse the text file
+            # Common formats: "label\ttext" or "label,text" or just text (assume phishing)
+            for line in lines:
+                line = line.strip()
+                if not line:
                     continue
+                
+                # Try to parse with tab separator
+                if '\t' in line:
+                    parts = line.split('\t', 1)
+                    if len(parts) == 2:
+                        label_text, message = parts
+                        # Map label variations to our classes
+                        label_lower = label_text.lower().strip()
+                        if 'smish' in label_lower or 'phish' in label_lower:
+                            label = 'phishing'
+                        elif 'spam' in label_lower:
+                            label = 'spam'
+                        elif 'ham' in label_lower or 'legit' in label_lower:
+                            label = 'legitimate'
+                        else:
+                            # Default to phishing if unclear
+                            label = 'phishing'
+                        
+                        all_data.append({
+                            'text': message,
+                            'label': label,
+                            'original_text': message
+                        })
+                        smish_count += 1
+                else:
+                    # If no separator, assume the entire line is a phishing/smishing message
+                    all_data.append({
+                        'text': line,
+                        'label': 'phishing',
+                        'original_text': line
+                    })
+                    smish_count += 1
             
-            # Try comma-separated
-            if ',' in line:
-                parts = line.split(',', 1)
-                if len(parts) == 2:
-                    label, text = parts
-                    label = label.lower().strip()
-                    
-                    if any(x in label for x in ['phish', 'smish', 'malicious', 'fraud', 'scam']):
-                        label = 'phishing'
-                    elif any(x in label for x in ['ham', 'legit', 'safe', 'normal']):
-                        label = 'legitimate'
-                    elif 'spam' in label:
-                        label = 'spam'
-                    else:
-                        label = 'phishing'
-                    
-                    messages.append({'text': text.strip(), 'label': label})
-                    continue
-            
-            # Plain text - assume phishing (for smishing datasets)
-            messages.append({'text': line, 'label': 'phishing'})
+            print(f"   ✓ SMSSmishCollection.txt: {smish_count} messages loaded")
+        else:
+            print(f"   ℹ️  SMSSmishCollection.txt not found (optional)")
+    except Exception as e:
+        print(f"   ✗ Error loading SMSSmishCollection.txt: {e}")
     
-    if not messages:
-        raise ValueError(f"No valid messages found in {txt_path. name}")
+    # Create final dataframe
+    df = pd.DataFrame(all_data)
     
-    df = pd.DataFrame(messages)
-    df['source'] = txt_path.name
-    return df[['text', 'label', 'source']]
-
-
-def load_all_datasets() -> pd.DataFrame:
+    if len(df) == 0:
+        raise ValueError("No data loaded from any dataset!")
     
-    if not DATA_DIR.exists():
-        raise FileNotFoundError(f"Data directory '{DATA_DIR}' not found.  Please create it and add datasets.")
+    # Clean text
+    print("\n🧹 Cleaning text...")
+    df[['cleaned_text', 'original_text']] = df.apply(
+        lambda row: pd.Series(clean_text(row['text'], preserve_urls=True)), 
+        axis=1
+    )
     
-    datasets = []
-    
-    # Load CSV files
-    csv_files = list(DATA_DIR.glob('*.csv'))
-    for csv_file in csv_files:
-        print(f"📂 Loading CSV: {csv_file.name}")
-        try:
-            df = load_csv_dataset(csv_file)
-            print(f"   ✓ {len(df)} messages | Classes: {df['label'].value_counts().to_dict()}")
-            datasets. append(df)
-        except Exception as e:
-            print(f"   ✗ Error:  {e}")
-    
-    # Load TXT files
-    txt_files = list(DATA_DIR. glob('*.txt'))
-    for txt_file in txt_files: 
-        print(f"📂 Loading TXT: {txt_file.name}")
-        try:
-            df = load_txt_dataset(txt_file)
-            print(f"   ✓ {len(df)} messages | Classes: {df['label'].value_counts().to_dict()}")
-            datasets.append(df)
-        except Exception as e: 
-            print(f"   ✗ Error: {e}")
-    
-    if not datasets:
-        raise ValueError("No datasets loaded. Add CSV or TXT files to the 'data/' directory.")
-    
-    # Combine all datasets
-    df_combined = pd.concat(datasets, ignore_index=True)
-    
-    print(f"\n📊 Combined:  {len(df_combined)} total messages")
-    print("\nClass distribution:")
-    print(df_combined['label'].value_counts())
-    
-    return df_combined
-
-
-def preprocess_text(text:  str) -> str:
-    """Clean and normalize text"""
-    if not isinstance(text, str):
-        return ""
-    
-    # Lowercase
-    text = text.lower()
-    
-    # Replace URLs with token
-    text = re.sub(r'http[s]?://\S+|www\.\S+', ' url_token ', text)
-    
-    # Replace emails with token
-    text = re. sub(r'\S+@\S+', ' email_token ', text)
-    
-    # Replace phone numbers with token
-    text = re.sub(r'\b\d{10,}\b', ' phone_token ', text)
-    
-    # Replace numbers with token
-    text = re. sub(r'\d+', ' num ', text)
-    
-    # Remove special characters (keep alphanumeric and spaces)
-    text = re.sub(r'[^a-z0-9\s]', ' ', text)
-    
-    # Collapse multiple spaces
-    text = re. sub(r'\s+', ' ', text).strip()
-    
-    return text
-
-
-def extract_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Extract additional features from text"""
-    df = df.copy()
-    
-    # Length features
-    df['char_count'] = df['text']. str.len()
-    df['word_count'] = df['text'].str.split().str.len()
-    
-    # URL features
-    df['has_url'] = df['text']. str.contains(r'http|www', case=False, na=False).astype(int)
-    df['url_count'] = df['text'].str.count(r'http[s]?://\S+|www\.\S+')
-    
-    # Urgency keywords
-    urgency_words = ['urgent', 'immediate', 'act now', 'limited time', 'expires', 'winner', 'congratulations', 'claim', 'verify', 'suspend', 'locked']
-    df['has_urgency'] = df['text'].str.lower().str.contains('|'.join(urgency_words), na=False).astype(int)
-    
-    # Money/prize keywords
-    money_words = ['prize', 'win', 'won', 'free', 'cash', '£', '$', '€', 'thousand', 'million', 'reward']
-    df['has_money'] = df['text'].str.lower().str.contains('|'.join(money_words), na=False).astype(int)
-    
-    # Credential keywords
-    credential_words = ['password', 'account', 'verify', 'confirm', 'login', 'security', 'bank', 'card', 'paypal']
-    df['has_credential'] = df['text'].str.lower().str.contains('|'.join(credential_words), na=False).astype(int)
+    print("\n📊 Initial class distribution:")
+    label_counts = df['label'].value_counts()
+    for label, count in label_counts.items():
+        pct = 100 * count / len(df)
+        print(f"   {label}: {count} ({pct:.1f}%)")
     
     return df
 
+def create_feature_matrix(df, vectorizer=None, fit=True):
+    """Create feature matrix combining TF-IDF and phishing features"""
+    print("\n🔧 Extracting features...")
+    
+    # TF-IDF features
+    if fit:
+        vectorizer = TfidfVectorizer(max_features=5000, ngram_range=(1, 2), min_df=2)
+        tfidf_features = vectorizer.fit_transform(df['cleaned_text'])
+    else:
+        tfidf_features = vectorizer.transform(df['cleaned_text'])
+    
+    # Phishing-specific features
+    phishing_features = df.apply(
+        lambda row: extract_phishing_features(row['cleaned_text'], row['original_text']), 
+        axis=1
+    )
+    phishing_df = pd.DataFrame(phishing_features.tolist())
+    
+    # Combine features
+    combined_features = hstack([tfidf_features, phishing_df.values])
+    
+    print(f"   ✓ TF-IDF features: {tfidf_features.shape[1]}")
+    print(f"   ✓ Phishing features: {phishing_df.shape[1]}")
+    print(f"   ✓ Total features: {combined_features.shape[1]}")
+    
+    return combined_features, vectorizer, phishing_df.columns.tolist()
 
-def train_model():
-    """Complete training pipeline"""
-    print("="*70)
-    print(" THE PHISHER - Training Multi-Class Detector ". center(70))
-    print("="*70)
-    print()
+def balance_classes_with_smote(X, y, random_state=42):
+    """Balance classes using SMOTE"""
+    print("\n⚖️  Applying SMOTE to balance classes...")
     
-    # Create model directory
-    MODEL_DIR.mkdir(exist_ok=True)
+    # Get current distribution
+    unique, counts = np.unique(y, return_counts=True)
+    print("   Before SMOTE:")
+    for label, count in zip(unique, counts):
+        print(f"      {label}: {count}")
     
-    # Load datasets
-    df = load_all_datasets()
+    # Apply SMOTE
+    smote = SMOTE(random_state=random_state, k_neighbors=5)
+    X_balanced, y_balanced = smote.fit_resample(X, y)
     
-    # Remove duplicates
-    before = len(df)
-    df = df.drop_duplicates(subset=['text'])
-    print(f"\n🧹 Removed {before - len(df)} duplicates → {len(df)} unique messages\n")
+    # Get new distribution
+    unique, counts = np.unique(y_balanced, return_counts=True)
+    print("   After SMOTE:")
+    for label, count in zip(unique, counts):
+        print(f"      {label}: {count}")
     
-    # Preprocess
-    print("🔄 Preprocessing text...")
-    df['text_clean'] = df['text'].apply(preprocess_text)
+    return X_balanced, y_balanced
+
+def train_model(X_train, y_train):
+    """Train ensemble model with balanced Random Forest"""
+    print("\n🎓 Training model...")
     
-    # Extract features (optional, for reference)
-    df = extract_features(df)
-    
-    # Prepare train/test split
-    X = df['text_clean']
-    y = df['label']
-    
-    # Check class distribution
-    class_counts = y.value_counts()
-    print(f"\n📊 Final class distribution:")
-    for label, count in class_counts.items():
-        print(f"   {label}: {count} ({count/len(y)*100:.1f}%)")
-    
-    # Split
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
-    
-    print(f"\n✂️  Split: {len(X_train)} train | {len(X_test)} test")
-    
-    # Vectorize
-    print("\n🔢 Vectorizing text (TF-IDF)...")
-    vectorizer = TfidfVectorizer(
-        max_features=10000,
-        ngram_range=(1, 3),
-        min_df=2,
-        max_df=0.9,
-        sublinear_tf=True,
-        strip_accents='unicode'
-    )
-    
-    X_train_vec = vectorizer. fit_transform(X_train)
-    X_test_vec = vectorizer.transform(X_test)
-    
-    print(f"   Vocabulary size: {len(vectorizer.vocabulary_)}")
-    
-    # Train model
-    print("\n🤖 Training Random Forest classifier...")
-    clf = RandomForestClassifier(
-        n_estimators=100,
-        max_depth=20,
-        min_samples_split=5,
-        class_weight='balanced',
-        random_state=42,
+    # Balanced Random Forest with optimized parameters
+    rf = RandomForestClassifier(
+        n_estimators=300,  # More trees for better performance
+        max_depth=30,      # Deeper trees for complex patterns
+        min_samples_split=5,  # Allow more granular splits
+        min_samples_leaf=2,   # Smaller leaves for better detail
+        class_weight='balanced_subsample',
+        random_state=RANDOM_STATE,
         n_jobs=-1,
         verbose=0
     )
     
-    clf.fit(X_train_vec, y_train)
+    # Train
+    rf.fit(X_train, y_train)
+    print("   ✓ Random Forest trained")
     
-    # Evaluate
-    print("\n" + "="*70)
-    print(" EVALUATION RESULTS ".center(70))
-    print("="*70)
-    
-    y_pred = clf.predict(X_test_vec)
-    
-    acc = accuracy_score(y_test, y_pred)
-    print(f"\n🎯 Accuracy: {acc:.4f} ({acc*100:.2f}%)")
-    
-    print("\n📋 Classification Report:")
-    print(classification_report(y_test, y_pred, zero_division=0))
-    
-    print("📊 Confusion Matrix:")
-    cm = confusion_matrix(y_test, y_pred, labels=['legitimate', 'spam', 'phishing'])
-    print(cm)
-    
-    # Save model artifacts
-    print("\n💾 Saving model artifacts...")
-    
-    with open(MODEL_PATH, 'wb') as f:
-        pickle.dump(clf, f)
-    print(f"   ✓ Model → {MODEL_PATH}")
-    
-    with open(VECTORIZER_PATH, 'wb') as f:
-        pickle.dump(vectorizer, f)
-    print(f"   ✓ Vectorizer → {VECTORIZER_PATH}")
-    
-    # Save label encoder (classes)
-    label_encoder = {'classes': clf.classes_. tolist()}
-    with open(LABEL_ENCODER_PATH, 'wb') as f:
-        pickle.dump(label_encoder, f)
-    print(f"   ✓ Label encoder → {LABEL_ENCODER_PATH}")
-    
-    # Test samples
-    print("\n" + "="*70)
-    print(" SAMPLE PREDICTIONS ".center(70))
-    print("="*70)
-    
-    test_samples = [
-        "Hey, are you coming to dinner tonight?",
-        "WINNER! You've won £1000 cash prize.  Call 09XX to claim now! ",
-        "Your bank account has been suspended.  Verify immediately:  http://fake-bank.com",
-        "Meeting rescheduled to 3pm. See you in room B.",
-        "URGENT: Your package delivery failed. Track here: bit.ly/xyz123"
-    ]
-    
-    for msg in test_samples:
-        result = predict_single(msg, clf, vectorizer)
-        print(f"\n📱 Message: {msg[: 65]}...")
-        print(f"   🎯 Prediction: {result['prediction']. upper()}")
-        print(f"   📊 Confidence:  {result['confidence']:.2%}")
-        print(f"   📈 Probabilities: ", end="")
-        for label, prob in result['probabilities']. items():
-            print(f"{label}={prob:.2%}  ", end="")
-        print()
-    
-    print("\n" + "="*70)
-    print(" ✅ Training Complete!  ".center(70))
-    print("="*70)
+    return rf
 
+def evaluate_model(model, X_test, y_test, label_encoder, output_dir="model"):
+    """Comprehensive model evaluation"""
+    print("\n📊 Evaluating model...")
+    
+    # Predictions
+    y_pred = model.predict(X_test)
+    y_pred_proba = model.predict_proba(X_test)
+    
+    # Overall accuracy
+    accuracy = accuracy_score(y_test, y_pred)
+    print(f"\n🎯 Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
+    
+    # Per-class metrics
+    print("\n📋 Per-class metrics:")
+    classes = label_encoder.classes_
+    precision, recall, f1, support = precision_recall_fscore_support(y_test, y_pred, labels=range(len(classes)))
+    
+    for i, class_name in enumerate(classes):
+        print(f"  {class_name:12s} - Precision: {precision[i]:.4f}  Recall: {recall[i]:.4f}  F1: {f1[i]:.4f}  Support: {support[i]}")
+    
+    # Classification report
+    print("\n" + classification_report(y_test, y_pred, target_names=classes))
+    
+    # Confusion matrix
+    cm = confusion_matrix(y_test, y_pred)
+    plot_confusion_matrix(cm, classes, output_dir)
+    
+    # ROC curves for multi-class
+    plot_roc_curves(y_test, y_pred_proba, classes, output_dir)
+    
+    # Sample predictions with confidence
+    print("\n🔮 Sample predictions (high confidence):")
+    indices = np.random.choice(len(y_test), min(10, len(y_test)), replace=False)
+    for idx in indices:
+        true_label = classes[y_test[idx]]
+        pred_label = classes[y_pred[idx]]
+        confidence = y_pred_proba[idx][y_pred[idx]] * 100
+        
+        if confidence > 80:
+            status = "✓" if true_label == pred_label else "✗"
+            print(f"   {status} True: {true_label:12s} | Pred: {pred_label:12s} | Confidence: {confidence:.1f}%")
 
+def plot_confusion_matrix(cm, classes, output_dir):
+    """Plot confusion matrix with percentages"""
+    plt.figure(figsize=(10, 8))
+    
+    # Calculate percentages
+    cm_percent = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis] * 100
+    
+    # Create annotations with both counts and percentages
+    annotations = np.empty_like(cm).astype(str)
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            annotations[i, j] = f'{cm[i, j]}\n({cm_percent[i, j]:.1f}%)'
+    
+    sns.heatmap(cm, annot=annotations, fmt='', cmap='Blues', 
+                xticklabels=classes, yticklabels=classes)
+    plt.title('Confusion Matrix (Count and Percentage)')
+    plt.ylabel('True Label')
+    plt.xlabel('Predicted Label')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'confusion_matrix.png'), dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"   ✓ Confusion matrix saved to {os.path.join(output_dir, 'confusion_matrix.png')}")
 
-def load_trained_model() -> Tuple: 
+def plot_roc_curves(y_test, y_pred_proba, classes, output_dir):
     
-    if not MODEL_PATH.exists() or not VECTORIZER_PATH. exists():
-        raise FileNotFoundError(
-            "Model files not found. Please train the model first:\n"
-            "  python phisher_complete.py train"
-        )
+    # Binarize the output for multi-class ROC
+    from sklearn.preprocessing import label_binarize
+    y_test_bin = label_binarize(y_test, classes=range(len(classes)))
     
-    with open(MODEL_PATH, 'rb') as f:
-        model = pickle.load(f)
+    plt.figure(figsize=(10, 8))
     
-    with open(VECTORIZER_PATH, 'rb') as f:
-        vectorizer = pickle.load(f)
+    for i, class_name in enumerate(classes):
+        if y_test_bin.shape[1] > 1:
+            fpr, tpr, _ = roc_curve(y_test_bin[:, i], y_pred_proba[:, i])
+            roc_auc = auc(fpr, tpr)
+            plt.plot(fpr, tpr, label=f'{class_name} (AUC = {roc_auc:.3f})')
     
-    return model, vectorizer
-
-
-def predict_single(message: str, model=None, vectorizer=None) -> Dict:
-    """Predict single message"""
-    # Load model if not provided
-    if model is None or vectorizer is None:
-        model, vectorizer = load_trained_model()
-    
-    # Preprocess
-    text_clean = preprocess_text(message)
-    
-    # Vectorize
-    text_vec = vectorizer.transform([text_clean])
-    
-    # Predict
-    prediction = model.predict(text_vec)[0]
-    probabilities = model.predict_proba(text_vec)[0]
-    
-    # Build result
-    result = {
-        'prediction': prediction,
-        'confidence': float(max(probabilities)),
-        'probabilities': {label: float(prob) for label, prob in zip(model.classes_, probabilities)}
-    }
-    
-    return result
-
-
-def predict_batch(messages: List[str]) -> List[Dict]:
-    """Predict multiple messages"""
-    model, vectorizer = load_trained_model()
-    
-    results = []
-    for msg in messages:
-        result = predict_single(msg, model, vectorizer)
-        results.append(result)
-    
-    return results
-
-
+    plt.plot([0, 1], [0, 1], 'k--', label='Random')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC Curves - Multi-class')
+    plt.legend(loc="lower right")
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'roc_curves.png'), dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"   ✓ ROC curves saved to {os.path.join(output_dir, 'roc_curves.png')}")
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage:")
-        print("  Train:    python phisher_complete.py train")
-        print("  Predict: python phisher_complete.py predict <message>")
-        print("  Example: python phisher_complete.py predict \"You won a prize! \"")
-        sys.exit(1)
+    os.makedirs("model", exist_ok=True)
     
-    command = sys.argv[1]. lower()
+    print("="*80)
+    print("🚀 Phishing Detection Model Training")
+    print("="*80)
     
-    if command == 'train':
-        train_model()
+    # Load data with sampling for manageable training time
+    # Use 80K total samples to ensure reasonable training time while maintaining quality
+    # This gives us more text/SMS data (which are better for short message classification)
+    df = load_datasets(sample_size=80000)
     
-    elif command == 'predict': 
-        if len(sys.argv) < 3:
-            print("Error: Please provide a message to predict")
-            print("Example: python phisher_complete.py predict \"Your message here\"")
-            sys.exit(1)
-        
-        message = ' '.join(sys.argv[2:])
-        
-        print("\n" + "="*70)
-        print(" THE PHISHER - Prediction ". center(70))
-        print("="*70)
-        
-        result = predict_single(message)
-        
-        print(f"\n📱 Message: {message}\n")
-        print(f"🎯 Prediction: {result['prediction'].upper()}")
-        print(f"📊 Confidence: {result['confidence']:.2%}\n")
-        print("📈 All probabilities:")
-        for label, prob in result['probabilities'].items():
-            bar = '█' * int(prob * 40)
-            print(f"   {label: 12s}: {bar} {prob:.2%}")
-        
-        print("\n" + "="*70)
+    # Encode labels
+    label_encoder = LabelEncoder()
+    y = label_encoder.fit_transform(df['label'])
     
-    else:
-        print(f"Unknown command: {command}")
-        print("Available commands: train, predict")
-        sys.exit(1)
+    # Create features
+    X, vectorizer, feature_names = create_feature_matrix(df, fit=True)
+    
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=RANDOM_STATE, stratify=y
+    )
+    
+    # Balance training data with SMOTE
+    X_train_balanced, y_train_balanced = balance_classes_with_smote(X_train, y_train, RANDOM_STATE)
+    
+    # Train model
+    model = train_model(X_train_balanced, y_train_balanced)
+    
+    # Evaluate
+    evaluate_model(model, X_test, y_test, label_encoder)
+    
+    # Save model
+    print("\n💾 Saving model...")
+    with open(OUTPUT_MODEL, 'wb') as f:
+        pickle.dump(model, f)
+    print(f"   ✓ Model saved to {OUTPUT_MODEL}")
+    
+    with open(OUTPUT_VECTORIZER, 'wb') as f:
+        pickle.dump(vectorizer, f)
+    print(f"   ✓ Vectorizer saved to {OUTPUT_VECTORIZER}")
+    
+    with open(OUTPUT_ENCODER, 'wb') as f:
+        pickle.dump(label_encoder, f)
+    print(f"   ✓ Label encoder saved to {OUTPUT_ENCODER}")
+    
+    print("\n" + "="*80)
+    print("✅ Training complete!")
+    print("="*80)
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
