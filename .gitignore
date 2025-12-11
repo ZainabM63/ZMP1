@@ -37,8 +37,10 @@ env/
 Thumbs.db
 
 # Model files (large binary files - optional, comment out if you want to commit them)
-# model/*.pkl
-# model/*.tflite
+model/*.pkl
+model/*.h5
+model/*.tflite
+model/*.png
 
 # Jupyter
 .ipynb_checkpoints/
