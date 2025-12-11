@@ -295,13 +295,18 @@ def train_model(model, X_train, y_train, X_test, y_test, epochs=10, batch_size=1
         pct = count / len(y_train_balanced) * 100
         print(f"      Class {i}: {count:,} ({pct:.1f}%)")
     
-    # Sample to reduce memory usage
+    # Sample to reduce memory usage with stratification
     MAX_TRAIN_SAMPLES = 60000
     if X_train_balanced.shape[0] > MAX_TRAIN_SAMPLES:
         print(f"\n💾 Sampling {MAX_TRAIN_SAMPLES:,} samples for memory efficiency...")
-        indices = np.random.choice(X_train_balanced.shape[0], MAX_TRAIN_SAMPLES, replace=False)
-        X_train_balanced = X_train_balanced[indices]
-        y_train_balanced = y_train_balanced[indices]
+        # Use stratified sampling to maintain class balance
+        from sklearn.model_selection import train_test_split
+        X_train_balanced, _, y_train_balanced, _ = train_test_split(
+            X_train_balanced, y_train_balanced,
+            train_size=MAX_TRAIN_SAMPLES,
+            stratify=y_train_balanced,
+            random_state=42
+        )
         print(f"   ✓ Training set reduced to {X_train_balanced.shape[0]:,} samples")
         print("   After sampling:")
         for i, count in enumerate(np.bincount(y_train_balanced)):
