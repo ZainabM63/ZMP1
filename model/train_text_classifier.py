@@ -1,7 +1,7 @@
 
 import sys
 import csv
-import ctype
+import ctypes
 try:
     safe_limit = min(sys.maxsize, ctypes.c_long.max)
 except Exception:
