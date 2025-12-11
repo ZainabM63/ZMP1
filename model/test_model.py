@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Test script to verify the trained phishing detection model"""
+
 
 import os
 import pickle
@@ -14,7 +13,7 @@ VECTORIZER_PATH = os.path.join("model", "vectorizer.pkl")
 ENCODER_PATH = os.path.join("model", "label_encoder.pkl")
 
 def load_model():
-    """Load trained model and preprocessors"""
+
     with open(MODEL_PATH, 'rb') as f:
         model = pickle.load(f)
     with open(VECTORIZER_PATH, 'rb') as f:
