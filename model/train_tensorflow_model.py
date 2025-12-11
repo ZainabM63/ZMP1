@@ -32,7 +32,7 @@ warnings.filterwarnings('ignore', category=UserWarning)
 # CONFIG
 OUTPUT_MODEL = os.path.join("model", "phisher_model.h5")
 OUTPUT_TFLITE = os.path.join("model", "phisher_model.tflite")
-OUTPUT_VECTORIZER = os.path.join("model", "phisher_vectorizer. pkl")
+OUTPUT_VECTORIZER = os.path.join("model", "phisher_vectorizer.pkl")
 OUTPUT_ENCODER = os.path.join("model", "label_encoder.pkl")
 RANDOM_STATE = 42
 
