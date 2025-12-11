@@ -128,7 +128,6 @@ def load_datasets(sample_size=None):
     
     # 4. Load SMSSmishCollection.txt (SMS/Smishing dataset)
     try:
-        import os
         smish_path = "data/SMSSmishCollection.txt"
         if os.path.exists(smish_path):
             with open(smish_path, 'r', encoding='utf-8', errors='ignore') as f:
