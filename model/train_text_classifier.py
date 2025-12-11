@@ -35,12 +35,7 @@ RANDOM_STATE = 42
 from utils import extract_phishing_features, clean_text
 
 def load_datasets(sample_size=None):
-    """Load and combine all datasets with proper handling
     
-    Args:
-        sample_size: If provided, sample datasets to this size for faster training.
-                    Use None for full dataset (default).
-    """
     all_data = []
     
     print("📂 Loading datasets...")
