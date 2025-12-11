@@ -66,22 +66,7 @@ with open(label_path, 'w') as f:
 
 print(f"   ✓ Label mapping saved → {label_path}")
 
-
-# ============================================
-# Convert Random Forest to TensorFlow
-# ============================================
-
 print("\n🔄 Converting Random Forest to TensorFlow...")
-
-# Since Random Forest can't be directly converted to TFLite,
-# we'll create a TensorFlow model that mimics the RF behavior
-# OR we'll export the trees as a lookup table
-
-# Option A: Save all tree predictions as a lookup (not practical for large models)
-# Option B: Convert to a neural network approximation
-# Option C: Use TF Decision Forests
-
-# For this project, we'll use **TF Decision Forests**
 
 try:
     import tensorflow_decision_forests as tfdf
@@ -95,10 +80,6 @@ except ImportError:
     print("   ⚠️  tensorflow_decision_forests not installed")
     print("   ℹ️  We'll use alternative approach:  Export model parameters")
 
-
-# ============================================
-# Alternative: Export Random Forest Parameters
-# ============================================
 
 print("\n📦 Exporting Random Forest parameters...")
 
