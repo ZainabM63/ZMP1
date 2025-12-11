@@ -1,0 +1,30 @@
+smish	URGENT: Your bank account has been suspended. Verify your identity at http://fake-bank.tk/verify immediately.
+smish	Security Alert: Unusual activity detected on your PayPal account. Click here to secure your account: http://paypal-secure.xyz
+smish	Your package delivery failed. Update your address: http://delivery-update.ml/track
+smish	Apple ID locked due to suspicious activity. Reset password now: http://apple-id-verify.gq
+smish	Your credit card will be blocked. Confirm details: http://card-verify.cf/update
+phishing	URGENT ACTION REQUIRED: Your Netflix account will be cancelled. Update payment method at http://netflix-billing.top
+phishing	Your Amazon order #12345 has been placed. If you didn't order this, cancel here: http://amazon-cancel.work
+phishing	Your tax refund of $2,500 is ready. Claim it now: http://irs-refund.click/claim
+phishing	Microsoft security: Your Windows license has expired. Renew immediately: http://ms-license.xyz
+phishing	Your email password will expire today. Reset it here: http://email-reset.ml
+spam	Congratulations! You've won a FREE iPhone 15! Claim your prize now!!!
+spam	WINNER! You have been selected for a $1,000,000 prize! Reply YES to claim!
+spam	Make $5000 a week working from home! No experience needed! Sign up now!
+spam	FREE GIFT CARDS! Get $500 Amazon gift card! Limited time offer!!!
+spam	Hot singles in your area want to meet you! Click here now!
+ham	Hey, are we still meeting for coffee tomorrow at 3pm?
+ham	Thanks for your help today! Really appreciate it.
+ham	Reminder: Doctor's appointment on Friday at 2:30pm
+ham	Your order has been shipped. Track it here: https://www.amazon.com/track
+ham	Meeting reminder: Team standup in 15 minutes
+smish	Your DHL package couldn't be delivered. Reschedule: http://dhl-delivery.tk
+smish	Bank alert: Suspicious transaction of $500. Verify here: http://192.168.1.100/bank
+smish	Your account will be closed. Update info: http://account-update.ga
+spam	Buy Viagra online! 50% off! Order now!
+spam	You've been pre-approved for a $10,000 loan! Apply today!
+ham	Can you pick up milk on your way home?
+ham	Happy birthday! Hope you have a great day!
+smish	Tax office: You have an outstanding payment. Pay here: http://tax-payment.cf
+phishing	Google: Verify your account to avoid suspension: http://google-verify.ml
+phishing	Facebook security: Someone tried to login to your account. Secure it: http://fb-secure.xyz

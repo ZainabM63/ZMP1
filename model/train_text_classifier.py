@@ -125,6 +125,64 @@ def load_datasets(sample_size=None):
     except Exception as e:
         print(f"   ✗ Error loading url_dataset.csv: {e}")
     
+    # 4. Load SMSSmishCollection.txt (SMS/Smishing dataset)
+    try:
+        import os
+        smish_path = "data/SMSSmishCollection.txt"
+        if os.path.exists(smish_path):
+            with open(smish_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+            
+            print(f"   ✓ SMSSmishCollection.txt: {len(lines)} rows (raw)")
+            
+            # Track loaded messages
+            smish_count = 0
+            
+            # Parse the text file
+            # Common formats: "label\ttext" or "label,text" or just text (assume phishing)
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Try to parse with tab separator
+                if '\t' in line:
+                    parts = line.split('\t', 1)
+                    if len(parts) == 2:
+                        label_text, message = parts
+                        # Map label variations to our classes
+                        label_lower = label_text.lower().strip()
+                        if 'smish' in label_lower or 'phish' in label_lower:
+                            label = 'phishing'
+                        elif 'spam' in label_lower:
+                            label = 'spam'
+                        elif 'ham' in label_lower or 'legit' in label_lower:
+                            label = 'legitimate'
+                        else:
+                            # Default to phishing if unclear
+                            label = 'phishing'
+                        
+                        all_data.append({
+                            'text': message,
+                            'label': label,
+                            'original_text': message
+                        })
+                        smish_count += 1
+                else:
+                    # If no separator, assume the entire line is a phishing/smishing message
+                    all_data.append({
+                        'text': line,
+                        'label': 'phishing',
+                        'original_text': line
+                    })
+                    smish_count += 1
+            
+            print(f"   ✓ SMSSmishCollection.txt: {smish_count} messages loaded")
+        else:
+            print(f"   ℹ️  SMSSmishCollection.txt not found (optional)")
+    except Exception as e:
+        print(f"   ✗ Error loading SMSSmishCollection.txt: {e}")
+    
     # Create final dataframe
     df = pd.DataFrame(all_data)
     

@@ -11,7 +11,9 @@ SUSPICIOUS_TLDS = ['.tk', '.ml', '.ga', '.cf', '.gq', '.xyz', '.top', '.work', '
 
 def extract_urls(text):
     """Extract URLs from text"""
-    url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+    # Match http/https URLs with common URL characters
+    # Explicitly list allowed characters to avoid suspicious ranges
+    url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[\$\-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
     return re.findall(url_pattern, text)
 
 def extract_phishing_features(text, original_text=None):

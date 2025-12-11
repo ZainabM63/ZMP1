@@ -20,10 +20,11 @@ This directory contains a machine learning model for detecting phishing, spam, a
 ## Key Features
 
 ### 1. Multi-Dataset Support ✅
-Successfully loads and combines three datasets:
+Successfully loads and combines multiple datasets:
 - **CEAS_08.csv**: Email dataset (39,154 rows)
 - **spam (1).csv**: SMS dataset (5,572 rows)
 - **url_dataset.csv**: URL-based dataset (450,176 rows) ✅ **NOW WORKING**
+- **SMSSmishCollection.txt**: SMS/Smishing dataset (optional) ✅ **NOW SUPPORTED**
 
 ### 2. Class Imbalance Handling ✅
 - Uses **SMOTE** (Synthetic Minority Over-sampling Technique)
@@ -116,9 +117,33 @@ confidence = probabilities[prediction] * 100
 print(f"Class: {predicted_class}, Confidence: {confidence:.1f}%")
 ```
 
+## Data Format
+
+The training script supports multiple data formats:
+
+1. **CSV files with headers** (CEAS_08.csv, spam (1).csv, url_dataset.csv)
+   - Automatically detects columns and mappings
+   
+2. **Text files** (SMSSmishCollection.txt)
+   - Tab-separated format: `label\tmessage`
+   - Supported labels: smish/phishing, spam, ham/legitimate
+   - Lines without tabs are treated as phishing messages
+
+Example SMSSmishCollection.txt format:
+```
+smish	URGENT: Your bank account will be suspended. Click here to verify.
+ham	Hey, are we still meeting for coffee tomorrow?
+spam	WIN FREE IPHONE! Click now!!!
+```
+
 ## Dependencies
 
 Install required packages:
+```bash
+pip install -r requirements.txt
+```
+
+Or install manually:
 ```bash
 pip install scikit-learn==1.5.2 imbalanced-learn xgboost pandas numpy matplotlib seaborn
 ```
