@@ -341,7 +341,7 @@ def plot_confusion_matrix(cm, classes, output_dir):
     print(f"   ✓ Confusion matrix saved to {os.path.join(output_dir, 'confusion_matrix.png')}")
 
 def plot_roc_curves(y_test, y_pred_proba, classes, output_dir):
-    """Plot ROC curves for each class"""
+    
     # Binarize the output for multi-class ROC
     from sklearn.preprocessing import label_binarize
     y_test_bin = label_binarize(y_test, classes=range(len(classes)))
