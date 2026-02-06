@@ -1,0 +1,8 @@
+{
+  "classes": [
+    "legitimate",
+    "phishing",
+    "spam"
+  ],
+  "num_classes": 3
+}
